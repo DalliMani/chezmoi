@@ -1,5 +1,5 @@
-path+=('/home/mshipyard2/.cargo/bin')
-path+=('/home/mshipyard2/.local/bin')
+path+=($HOME/.cargo/bin)
+path+=($HOME/.local/bin)
 
 #My custom aliases
 alias warpme='warp-cli connect' #Connects to Cloudflare WARP (requires connection from the website via tunnel

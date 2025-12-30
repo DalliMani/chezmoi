@@ -3,70 +3,89 @@
 # Configuration
 DEST_DIR="/opt/appimgs"
 DESKTOP_DIR="$HOME/.local/share/applications"
+TEMP_EXTRACT_DIR="/tmp/appimage_extract_$(date +%s)"
 
 # Check for root privileges
 if [ "$EUID" -ne 0 ]; then
-  echo "Error: This script must be run with sudo to manage $DEST_DIR"
+  echo "Error: This script must be run with sudo."
   exit 1
 fi
 
-# Ensure destination directory exists
 mkdir -p "$DEST_DIR"
 
-# 1. Path to AppImage (Required)
+# 1. Path to AppImage
 read -p "Enter path to AppImage: " APP_PATH
-if [[ ! -f "$APP_PATH" ]]; then
-    echo "Error: AppImage file not found at $APP_PATH"
-    exit 1
-fi
+[[ ! -f "$APP_PATH" ]] && {
+  echo "Error: File not found."
+  exit 1
+}
 
 # 2. Path to Icon (Optional)
-read -p "Enter path to Icon (press Enter to skip): " ICON_PATH
+read -p "Enter path to Icon (Leave empty to auto-extract): " ICON_PATH
 
-# 3. Application Name (Required)
+# 3. Application Name
 read -p "Enter Application Name: " APP_NAME
-if [[ -z "$APP_NAME" ]]; then
-    APP_NAME=$(basename "$APP_PATH" .AppImage)
-    echo "Using default name: $APP_NAME"
-fi
-
-# 4. Comment & Category (Optional)
-read -p "Enter Comment (press Enter to skip): " APP_COMMENT
-read -p "Enter Categories [Utility;Network;] (press Enter for 'Utility;'): " APP_CAT
-[[ -z "$APP_CAT" ]] && APP_CAT="Utility;"
-
-# --- Processing ---
+[[ -z "$APP_NAME" ]] && APP_NAME=$(basename "$APP_PATH" .AppImage)
 
 APP_FILENAME=$(basename "$APP_PATH")
 DESKTOP_FILENAME="${APP_NAME// /_}.desktop"
 
-# Handle AppImage
+# Ensure AppImage is executable
 chmod a+x "$APP_PATH"
-mv "$APP_PATH" "$DEST_DIR/"
 
-# Handle Icon Logic
-if [[ -n "$ICON_PATH" && -f "$ICON_PATH" ]]; then
-    ICON_FILENAME=$(basename "$ICON_PATH")
-    mv "$ICON_PATH" "$DEST_DIR/"
-    ICON_LINE="Icon=$DEST_DIR/$ICON_FILENAME"
-else
-    # Fallback if no icon is provided
-    ICON_LINE="Icon=system-run"
+# --- Icon Extraction Routine ---
+if [[ -z "$ICON_PATH" ]]; then
+  echo "Attempting to extract official icon..."
+  mkdir -p "$TEMP_EXTRACT_DIR"
+  cd "$TEMP_EXTRACT_DIR" || exit
+
+  # Extract only icon files to save time/space
+  # Most AppImages have a .DirIcon or a PNG named after the app in the root
+  if "$APP_PATH" --appimage-extract "*.png" >/dev/null 2>&1 || "$APP_PATH" --appimage-extract ".DirIcon" >/dev/null 2>&1; then
+    # Look for the best icon: .DirIcon first, then any png
+    EXTRACTED_ICON=$(find squashfs-root -maxdepth 1 -name ".DirIcon" -o -name "*.png" | head -n 1)
+
+    if [[ -n "$EXTRACTED_ICON" ]]; then
+      ICON_FILENAME="${APP_NAME// /_}_icon.png"
+      mv "$EXTRACTED_ICON" "$DEST_DIR/$ICON_FILENAME"
+      ICON_PATH="$DEST_DIR/$ICON_FILENAME"
+      echo "Successfully extracted: $ICON_FILENAME"
+    fi
+  fi
+
+  # Cleanup temp files
+  rm -rf "$TEMP_EXTRACT_DIR"
+  cd - >/dev/null
 fi
 
-# Create the .desktop file
-cat <<EOF > "$DESKTOP_DIR/$DESKTOP_FILENAME"
+# Final Icon Assignment
+if [[ -f "$ICON_PATH" ]]; then
+  # If it was a manual path and not already in /opt, move it
+  if [[ "$ICON_PATH" != "$DEST_DIR"* ]]; then
+    ICON_FILENAME=$(basename "$ICON_PATH")
+    mv "$ICON_PATH" "$DEST_DIR/"
+    ICON_PATH="$DEST_DIR/$ICON_FILENAME"
+  fi
+  ICON_LINE="Icon=$ICON_PATH"
+else
+  echo "Warning: No icon found. Using fallback."
+  ICON_LINE="Icon=system-run"
+fi
+
+# --- Finalize ---
+mv "$APP_PATH" "$DEST_DIR/"
+
+cat <<EOF >"$DESKTOP_DIR/$DESKTOP_FILENAME"
 [Desktop Entry]
 Name=$APP_NAME
-Comment=${APP_COMMENT:-No description provided}
 Exec=$DEST_DIR/$APP_FILENAME --no-sandbox
 $ICON_LINE
 Terminal=false
 Type=Application
-Categories=$APP_CAT
+Categories=Utility;
 EOF
 
-# Fix ownership of the .desktop file (revert from root to the user who ran sudo)
+# Restore ownership to the user
 REAL_USER=${SUDO_USER:-$USER}
 chown "$REAL_USER":"$REAL_USER" "$DESKTOP_DIR/$DESKTOP_FILENAME"
 
