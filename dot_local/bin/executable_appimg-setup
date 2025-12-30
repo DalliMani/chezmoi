@@ -1,0 +1,75 @@
+#!/bin/bash
+
+# Configuration
+DEST_DIR="/opt/appimgs"
+DESKTOP_DIR="$HOME/.local/share/applications"
+
+# Check for root privileges
+if [ "$EUID" -ne 0 ]; then
+  echo "Error: This script must be run with sudo to manage $DEST_DIR"
+  exit 1
+fi
+
+# Ensure destination directory exists
+mkdir -p "$DEST_DIR"
+
+# 1. Path to AppImage (Required)
+read -p "Enter path to AppImage: " APP_PATH
+if [[ ! -f "$APP_PATH" ]]; then
+    echo "Error: AppImage file not found at $APP_PATH"
+    exit 1
+fi
+
+# 2. Path to Icon (Optional)
+read -p "Enter path to Icon (press Enter to skip): " ICON_PATH
+
+# 3. Application Name (Required)
+read -p "Enter Application Name: " APP_NAME
+if [[ -z "$APP_NAME" ]]; then
+    APP_NAME=$(basename "$APP_PATH" .AppImage)
+    echo "Using default name: $APP_NAME"
+fi
+
+# 4. Comment & Category (Optional)
+read -p "Enter Comment (press Enter to skip): " APP_COMMENT
+read -p "Enter Categories [Utility;Network;] (press Enter for 'Utility;'): " APP_CAT
+[[ -z "$APP_CAT" ]] && APP_CAT="Utility;"
+
+# --- Processing ---
+
+APP_FILENAME=$(basename "$APP_PATH")
+DESKTOP_FILENAME="${APP_NAME// /_}.desktop"
+
+# Handle AppImage
+chmod a+x "$APP_PATH"
+mv "$APP_PATH" "$DEST_DIR/"
+
+# Handle Icon Logic
+if [[ -n "$ICON_PATH" && -f "$ICON_PATH" ]]; then
+    ICON_FILENAME=$(basename "$ICON_PATH")
+    mv "$ICON_PATH" "$DEST_DIR/"
+    ICON_LINE="Icon=$DEST_DIR/$ICON_FILENAME"
+else
+    # Fallback if no icon is provided
+    ICON_LINE="Icon=system-run"
+fi
+
+# Create the .desktop file
+cat <<EOF > "$DESKTOP_DIR/$DESKTOP_FILENAME"
+[Desktop Entry]
+Name=$APP_NAME
+Comment=${APP_COMMENT:-No description provided}
+Exec=$DEST_DIR/$APP_FILENAME --no-sandbox
+$ICON_LINE
+Terminal=false
+Type=Application
+Categories=$APP_CAT
+EOF
+
+# Fix ownership of the .desktop file (revert from root to the user who ran sudo)
+REAL_USER=${SUDO_USER:-$USER}
+chown "$REAL_USER":"$REAL_USER" "$DESKTOP_DIR/$DESKTOP_FILENAME"
+
+echo "------------------------------------------------"
+echo "Success! '$APP_NAME' has been indexed."
+echo "Entry created at: $DESKTOP_DIR/$DESKTOP_FILENAME"
