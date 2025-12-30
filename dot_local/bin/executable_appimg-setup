@@ -1,94 +1,78 @@
 #!/bin/bash
+set -euo pipefail
 
-# Configuration
-DEST_DIR="/opt/appimgs"
-DESKTOP_DIR="$HOME/.local/share/applications"
-TEMP_EXTRACT_DIR="/tmp/appimage_extract_$(date +%s)"
+# ---- CONFIG ----
+DEST_DIR="/opt/appimages"
+REAL_USER="${SUDO_USER:-$USER}"
+USER_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
+DESKTOP_DIR="$USER_HOME/.local/share/applications"
+TMP_DIR="$(mktemp -d)"
 
-# Check for root privileges
-if [ "$EUID" -ne 0 ]; then
-  echo "Error: This script must be run with sudo."
+# ---- ROOT CHECK ----
+if [[ $EUID -ne 0 ]]; then
+  echo "Run with sudo"
   exit 1
 fi
 
-mkdir -p "$DEST_DIR"
+if [[ $# -ne 1 ]]; then
+  echo "Usage: sudo $0 <AppImage>"
+  exit 1
+fi
 
-# 1. Path to AppImage
-read -p "Enter path to AppImage: " APP_PATH
-[[ ! -f "$APP_PATH" ]] && {
-  echo "Error: File not found."
+APP_PATH="$(realpath "$1")"
+[[ -f "$APP_PATH" ]] || {
+  echo "File not found"
   exit 1
 }
 
-# 2. Path to Icon (Optional)
-read -p "Enter path to Icon (Leave empty to auto-extract): " ICON_PATH
+mkdir -p "$DEST_DIR" "$DESKTOP_DIR"
 
-# 3. Application Name
-read -p "Enter Application Name: " APP_NAME
-[[ -z "$APP_NAME" ]] && APP_NAME=$(basename "$APP_PATH" .AppImage)
+# ---- APP NAME ----
+DEFAULT_NAME="$(basename "$APP_PATH" .AppImage)"
+read -r -p "Application name [$DEFAULT_NAME]: " APP_NAME
+APP_NAME="${APP_NAME:-$DEFAULT_NAME}"
 
-APP_FILENAME=$(basename "$APP_PATH")
-DESKTOP_FILENAME="${APP_NAME// /_}.desktop"
+APP_BASENAME="${APP_NAME// /_}"
+APPIMAGE_DEST="$DEST_DIR/$APP_BASENAME.AppImage"
+DESKTOP_FILE="$DESKTOP_DIR/$APP_BASENAME.desktop"
+ICON_PATH=""
 
-# Ensure AppImage is executable
-chmod a+x "$APP_PATH"
+# ---- INSTALL APPIMAGE ----
+cp "$APP_PATH" "$APPIMAGE_DEST"
+chmod 755 "$APPIMAGE_DEST"
 
-# --- Icon Extraction Routine ---
-if [[ -z "$ICON_PATH" ]]; then
-  echo "Attempting to extract official icon..."
-  mkdir -p "$TEMP_EXTRACT_DIR"
-  cd "$TEMP_EXTRACT_DIR" || exit
+# ---- ICON EXTRACTION ----
+echo "Extracting icon…"
+cd "$TMP_DIR"
+"$APPIMAGE_DEST" --appimage-extract >/dev/null 2>&1 || true
 
-  # Extract only icon files to save time/space
-  # Most AppImages have a .DirIcon or a PNG named after the app in the root
-  if "$APP_PATH" --appimage-extract "*.png" >/dev/null 2>&1 || "$APP_PATH" --appimage-extract ".DirIcon" >/dev/null 2>&1; then
-    # Look for the best icon: .DirIcon first, then any png
-    EXTRACTED_ICON=$(find squashfs-root -maxdepth 1 -name ".DirIcon" -o -name "*.png" | head -n 1)
-
-    if [[ -n "$EXTRACTED_ICON" ]]; then
-      ICON_FILENAME="${APP_NAME// /_}_icon.png"
-      mv "$EXTRACTED_ICON" "$DEST_DIR/$ICON_FILENAME"
-      ICON_PATH="$DEST_DIR/$ICON_FILENAME"
-      echo "Successfully extracted: $ICON_FILENAME"
-    fi
+if [[ -d squashfs-root ]]; then
+  ICON_CANDIDATE="$(find squashfs-root -type f \( -name '*.png' -o -name '.DirIcon' \) | sort | head -n 1)"
+  if [[ -n "$ICON_CANDIDATE" ]]; then
+    ICON_PATH="$DEST_DIR/$APP_BASENAME.png"
+    cp "$ICON_CANDIDATE" "$ICON_PATH"
+    chmod 644 "$ICON_PATH"
   fi
-
-  # Cleanup temp files
-  rm -rf "$TEMP_EXTRACT_DIR"
-  cd - >/dev/null
 fi
 
-# Final Icon Assignment
-if [[ -f "$ICON_PATH" ]]; then
-  # If it was a manual path and not already in /opt, move it
-  if [[ "$ICON_PATH" != "$DEST_DIR"* ]]; then
-    ICON_FILENAME=$(basename "$ICON_PATH")
-    mv "$ICON_PATH" "$DEST_DIR/"
-    ICON_PATH="$DEST_DIR/$ICON_FILENAME"
-  fi
-  ICON_LINE="Icon=$ICON_PATH"
-else
-  echo "Warning: No icon found. Using fallback."
-  ICON_LINE="Icon=system-run"
-fi
+rm -rf "$TMP_DIR"
 
-# --- Finalize ---
-mv "$APP_PATH" "$DEST_DIR/"
-
-cat <<EOF >"$DESKTOP_DIR/$DESKTOP_FILENAME"
+# ---- DESKTOP ENTRY ----
+cat >"$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Name=$APP_NAME
-Exec=$DEST_DIR/$APP_FILENAME --no-sandbox
-$ICON_LINE
+Exec="$APPIMAGE_DEST"
+Icon=${ICON_PATH:-system-run}
 Terminal=false
 Type=Application
 Categories=Utility;
 EOF
 
-# Restore ownership to the user
-REAL_USER=${SUDO_USER:-$USER}
-chown "$REAL_USER":"$REAL_USER" "$DESKTOP_DIR/$DESKTOP_FILENAME"
+# ---- OWNERSHIP ----
+chown "$REAL_USER:$REAL_USER" "$DESKTOP_FILE"
+chown "$REAL_USER:$REAL_USER" "$APPIMAGE_DEST"
+[[ -n "$ICON_PATH" ]] && chown "$REAL_USER:$REAL_USER" "$ICON_PATH"
 
-echo "------------------------------------------------"
-echo "Success! '$APP_NAME' has been indexed."
-echo "Entry created at: $DESKTOP_DIR/$DESKTOP_FILENAME"
+echo "Installed:"
+echo "  AppImage: $APPIMAGE_DEST"
+echo "  Desktop : $DESKTOP_FILE"
