@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+
+MOUNT_POINT="$HOME/GDrive"
+REMOTE="gd:"
+RCLONE_OPTS="--daemon --vfs-cache-mode full"
+
+connect() {
+    mkdir -p "$MOUNT_POINT"
+    rclone mount "$REMOTE" "$MOUNT_POINT" $RCLONE_OPTS
+}
+
+disconnect() {
+    fusermount -uz "$MOUNT_POINT"
+}
+
+case "${1:-}" in
+    connect)
+        connect
+        ;;
+    disconnect)
+        disconnect
+        ;;
+    *)
+        echo "usage: gdrive {connect|disconnect}" >&2
+        exit 1
+        ;;
+esac
+
