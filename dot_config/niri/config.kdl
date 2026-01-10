@@ -624,3 +624,5 @@ binds {
     // moving the mouse or pressing any other key.
     Mod+Shift+P { power-off-monitors; }
 }
+
+spawn-at-startup "gsettings set org.gnome.desktop.interface text-scaling-factor 0.8"
