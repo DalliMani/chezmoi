@@ -1,6 +1,10 @@
 path+=($HOME/.cargo/bin)
 path+=($HOME/.local/bin)
 
+#My preferred editors set in EDITOR and VISUAL environment variables
+export EDITOR='nvim'
+export VISUAL='nvim'
+
 #My custom aliases
 alias warpme='warp-cli connect' #Connects to Cloudflare WARP (requires connection from the website via tunnel
 alias unwarpme='warp-cli disconnect' #opposite of above
